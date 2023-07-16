@@ -1,78 +1,108 @@
 package main
 
 import (
+	"fmt"
+	"log"
+	"net"
+	"syscall"
+	"unsafe"
+
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	_ "github.com/google/gopacket/layers"
-	"github.com/songgao/water"
-	"log"
+	"github.com/google/gopacket/pcap"
 )
 
 func main() {
-	ifce, err := water.New(water.Config{
-		DeviceType: water.TUN,
-	})
+	fd, err := createTun()
+	handle, err := pcap.OpenLive("en0", 1600, true, pcap.BlockForever)
+	if err != nil {
+		panic(err)
+	}
+	defer handle.Close()
+	ip := &layers.IPv4{
+		SrcIP: net.IP{192, 168, 1, 1},
+		DstIP: net.IP{192, 168, 1, 2},
+	}
+
+	tcp := &layers.TCP{
+		SrcPort: layers.TCPPort(12345),
+		DstPort: layers.TCPPort(80),
+	}
+
+	// Create the packet with the layers
+	buffer := gopacket.NewSerializeBuffer()
+	err = gopacket.SerializeLayers(buffer, gopacket.SerializeOptions{
+		FixLengths:       true,
+		ComputeChecksums: true,
+	}, ip, tcp)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("Interface name: %s\n", ifce.Name())
-	raw := make([]byte, 1500)
 
-	synFlag := false
-	for {
-		_, err := ifce.Read(raw)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if synFlag {
-			continue
-		}
+	outgoingPacket := buffer.Bytes()
 
-		packet := gopacket.NewPacket(raw, layers.LayerTypeIPv4, gopacket.Default)
-		if ipLayer := packet.Layer(layers.LayerTypeIPv4); ipLayer != nil {
-			ip, _ := ipLayer.(*layers.IPv4)
+	// Send our packet
+	err = handle.WritePacketData(outgoingPacket)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-			if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
-				tcp, _ := tcpLayer.(*layers.TCP)
+	// Start reading packets
+	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	for packet := range packetSource.Packets() {
+		// Process packet here
+		fmt.Println(packet)
+	}
 
-				tcp_resp := &layers.TCP{
-					SrcPort:    tcp.DstPort,
-					DstPort:    tcp.SrcPort,
-					DataOffset: 5,
-					Seq:        300,
-					Ack:        tcp.Seq + 1,
-					SYN:        true,
-					ACK:        true,
-					Window:     100,
-				}
+}
 
-				ip_resp := &layers.IPv4{
-					SrcIP:    ip.DstIP,
-					DstIP:    ip.SrcIP,
-					TTL:      64,
-					Version:  4,
-					IHL:      5,
-					Protocol: layers.IPProtocolTCP,
-					Length:   20 + 20, // should be calculated
-				}
+const (
+	_CTLIOCGINFO      = 3223348741
+	_SYSPROTO_CONTROL = 2
+	UTUN_CONTROL_NAME = "com.apple.net.utun_control"
+)
 
-				_ = tcp_resp.SetNetworkLayerForChecksum(ip_resp)
+// thanks goes to Jonathan Levin for providing example code on how to create a utun device on macOS.
+// (http://newosxbook.com/src.jl?tree=listings&file=17-15-utun.c)
+func createTun() (int, error) {
+	ctlInfo := struct {
+		ctlId   uint32
+		ctlName [96]byte
+	}{
+		0,
+		[96]byte{},
+	}
+	copy(ctlInfo.ctlName[:], UTUN_CONTROL_NAME)
 
-				buf := gopacket.NewSerializeBuffer()
-				opts := gopacket.SerializeOptions{
-					ComputeChecksums: true,
-					FixLengths:       true,
-				}
-				gopacket.SerializeLayers(buf, opts,
-					ip_resp,
-					tcp_resp,
-				)
+	sockAddrCtl := struct {
+		sc_id       uint32
+		sc_len      uint32
+		sc_family   uint32
+		ss_sysaddr  [128]byte
+		sc_unit     uint32
+		sc_reserved [32]byte
+	}{}
 
-				ifce.Write(buf.Bytes())
-				synFlag = true
-				continue
-			}
-		}
+	fd, err := syscall.Socket(
+		syscall.AF_SYSTEM, // PF_SYSTEM == AF_SYSTEM
+		syscall.SOCK_DGRAM,
+		_SYSPROTO_CONTROL,
+	)
+	if err != nil {
+		return -1, err
+	}
+	_, _, errno := syscall.Syscall(
+		syscall.SYS_IOCTL,
+		uintptr(fd),
+		uintptr(_CTLIOCGINFO),
+		uintptr(unsafe.Pointer(&ctlInfo)),
+	)
+	if errno != 0 {
+		return -1, err
+	}
 
+	if err := syscall.Connect(fd, unsafe.Pointer(&sockAddrCtl)); err != nil {
+		return -1, err
 	}
 }
