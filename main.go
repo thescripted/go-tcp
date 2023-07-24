@@ -78,6 +78,11 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
+			// must validate checksum
+			if err = validateTCP(ipv4, tcp); err != nil {
+				panic(err)
+			}
+
 			// for now, check if it's a syn packet and try to acknowledge it.
 			if tcp.Control&0x02 == 0x02 {
 				tcpResp := TCP{
@@ -149,6 +154,26 @@ func checksum(bytes []byte) uint16 {
 		csum = (csum >> 16) + int(uint16(csum)) // must cast to uint16, otherwise it will overflow
 	}
 	return ^uint16(csum)
+}
+
+func validateTCP(ipv4 IPv4, tcp TCP) error {
+	pseudo := make([]byte, 12)
+	copy(pseudo[0:4], ipv4.SrcIP)
+	copy(pseudo[4:8], ipv4.DstIP)
+	pseudo[8] = 0
+	pseudo[9] = ipv4.Proto
+	m, _ := tcp.Marshal()
+	binary.BigEndian.PutUint16(pseudo[10:12], uint16(len(m)))
+
+	check := tcp.Checksum
+	tcp.Checksum = 0
+	m, _ = tcp.Marshal()
+	calc := checksum(append(pseudo, m...))
+	if check != calc {
+		return fmt.Errorf("Checksum mismatch. Expected %d, got %d", check, calc)
+	}
+	fmt.Printf("Checksum validated: %d\n", check)
+	return nil
 }
 
 type IPv4 struct {
