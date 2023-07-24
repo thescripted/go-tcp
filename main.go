@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/binary"
 	"net"
-	"time"
 
 	"github.com/songgao/water"
 )
@@ -20,66 +19,63 @@ func main() {
 	}
 
 	defer tun.Close()
-	c := time.Tick(1 * time.Second)
-	for range c {
-		buffer := make([]byte, MTU_SIZE)
-		n, err := tun.Read(buffer)
+	buffer := make([]byte, MTU_SIZE)
+	n, err := tun.Read(buffer)
+	if err != nil {
+		panic(err)
+	}
+	ipv4Packet, err := parseIPv4Packet(buffer[:n])
+	if err != nil {
+		panic(err)
+	}
+	if ipv4Packet.Protocol == 1 { // ICMP
+		icmp, err := parseICMPEchoRequest(ipv4Packet.Payload)
 		if err != nil {
 			panic(err)
 		}
-		ipv4Packet, err := parseIPv4Packet(buffer[:n])
-		if err != nil {
-			panic(err)
-		}
-		if ipv4Packet.Protocol == 1 { // ICMP
-			icmp, err := parseICMPEchoRequest(ipv4Packet.Payload)
+		if icmp.Type == 8 { // echo request
+			icmpResponse := ICMPEchoPacket{
+				Type:     0, // echo reply
+				Code:     0,
+				Checksum: 0, // will be computed later
+				Id:       icmp.Id,
+				Seq:      icmp.Seq,
+				Payload:  icmp.Payload,
+			}
+
+			m, _ := icmpResponse.Marshal()
+			icmpResponse.Checksum = checksum(m)
+
+			icmpSendPacket, err := icmpResponse.Marshal()
 			if err != nil {
 				panic(err)
 			}
-			if icmp.Type == 8 { // echo request
-				icmpResponse := ICMPEchoPacket{
-					Type:     0, // echo reply
-					Code:     0,
-					Checksum: 0, // will be computed later
-					Id:       icmp.Id,
-					Seq:      icmp.Seq,
-					Payload:  icmp.Payload,
-				}
 
-				m, _ := icmpResponse.Marshal()
-				icmpResponse.Checksum = checksum(m)
+			// ip header
+			ipv4Response := IPv4Packet{
+				Version:    4,
+				IHL:        5,
+				TOS:        0,
+				Length:     uint16(20 + len(icmpSendPacket)),
+				Id:         0,
+				Flags:      0,
+				FragOffset: 0,
+				TTL:        64,
+				Protocol:   1,
+				Checksum:   0,
+				SrcIP:      ipv4Packet.DstIP,
+				DstIP:      ipv4Packet.SrcIP,
+				Payload:    icmpSendPacket,
+			}
 
-				icmpSendPacket, err := icmpResponse.Marshal()
-				if err != nil {
-					panic(err)
-				}
+			ipv4SendPacket, err := ipv4Response.Marshal()
+			if err != nil {
+				panic(err)
+			}
 
-				// ip header
-				ipv4Response := IPv4Packet{
-					Version:    4,
-					IHL:        5,
-					TOS:        0,
-					Length:     uint16(20 + len(icmpSendPacket)),
-					Id:         0,
-					Flags:      0,
-					FragOffset: 0,
-					TTL:        64,
-					Protocol:   1,
-					Checksum:   0,
-					SrcIP:      ipv4Packet.DstIP,
-					DstIP:      ipv4Packet.SrcIP,
-					Payload:    icmpSendPacket,
-				}
-
-				ipv4SendPacket, err := ipv4Response.Marshal()
-				if err != nil {
-					panic(err)
-				}
-
-				_, err = tun.Write(ipv4SendPacket)
-				if err != nil {
-					panic(err)
-				}
+			_, err = tun.Write(ipv4SendPacket)
+			if err != nil {
+				panic(err)
 			}
 		}
 	}
