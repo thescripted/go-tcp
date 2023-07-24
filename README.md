@@ -1,4 +1,5 @@
-# go-tcp: A TCP Implementation in Go
+# (wip) go-tcp: A TCP Stack in Go
 
-I showed you my SYN/ACK please respond...
+Hobby, likely low-performant, work-in-progress project that implements a TCP Stack in userspace on Mac devices.
 
+Only compatible with Darwin/OSX at the moment.
