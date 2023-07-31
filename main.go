@@ -21,7 +21,7 @@ func main() {
 
 	defer tun.Close()
 	buffer := make([]byte, MTU_SIZE)
-	fmt.Printf("Listening on %s\n", tun.Name())
+
 	for {
 		n, err := tun.Read(buffer)
 		if err != nil {
