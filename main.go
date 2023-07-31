@@ -111,6 +111,17 @@ func main() {
 				if err != nil {
 					panic(err)
 				}
+				tsVal:= binary.BigEndian.Uint32(tcp.Payload[4:8])
+				
+				options := []byte{
+					0x02, 0x04, 0x05, 0xb4, // Maximum Segment Size
+					0x04, 0x02, // SACK permitted
+					0x08, 0x0a, // timestamp
+					byte(tsVal >> 24), byte(tsVal >> 16), byte(tsVal >> 8), byte(tsVal), // Timestamp Value
+					0x0, 0x0, 0x0, 0x0, // Timestamp Echo Reply
+					0x01, 0x03, 0x03, 0x07,
+				}
+				tcpRespPkt = append(tcpRespPkt, options...)
 
 				ipv4Response := IPv4{
 					Version:  4,
@@ -172,7 +183,6 @@ func validateTCP(ipv4 IPv4, tcp TCP) error {
 	if check != calc {
 		return fmt.Errorf("Checksum mismatch. Expected %d, got %d", check, calc)
 	}
-	fmt.Printf("Checksum validated: %d\n", check)
 	return nil
 }
 
