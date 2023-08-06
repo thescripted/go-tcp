@@ -88,7 +88,7 @@ func main() {
 				tcpResp := TCP{
 					srcPort:  tcp.destPort,
 					destPort: tcp.srcPort,
-					Seq:      300,
+					Seq:      34301,
 					Ack:      tcp.Seq + 1,
 					Offset:   5,
 					Control:  0x12, // SYN,ACK
@@ -111,18 +111,7 @@ func main() {
 				if err != nil {
 					panic(err)
 				}
-				tsVal:= binary.BigEndian.Uint32(tcp.Payload[4:8])
 				
-				options := []byte{
-					0x02, 0x04, 0x05, 0xb4, // Maximum Segment Size
-					0x04, 0x02, // SACK permitted
-					0x08, 0x0a, // timestamp
-					byte(tsVal >> 24), byte(tsVal >> 16), byte(tsVal >> 8), byte(tsVal), // Timestamp Value
-					0x0, 0x0, 0x0, 0x0, // Timestamp Echo Reply
-					0x01, 0x03, 0x03, 0x07,
-				}
-				tcpRespPkt = append(tcpRespPkt, options...)
-
 				ipv4Response := IPv4{
 					Version:  4,
 					IHL:      5,
@@ -140,7 +129,9 @@ func main() {
 				}
 
 				ipv4RespPkt, err := ipv4Response.Marshal()
-
+				if err != nil {
+					panic(err)
+				}
 				_, err = tun.Write(ipv4RespPkt)
 				if err != nil {
 					panic(err)
